@@ -23,6 +23,16 @@ add_executable(tutorial
 )
 target_link_libraries(tutorial ${COMMON_LIBS})
 
+add_executable(tutorial2
+    tutorial2.cpp
+)
+target_link_libraries(tutorial2 ${COMMON_LIBS})
+
+add_executable(original_tutorial2
+    original_tutorial2.cpp
+)
+target_link_libraries(original_tutorial2 ${COMMON_LIBS})
+
 # SHADERS
 find_program(GLSL_VALIDATOR glslangValidator HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/)
 

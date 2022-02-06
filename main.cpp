@@ -99,7 +99,6 @@ void initVulkan()
     { // create vulkan instance
         VkApplicationInfo appInfo = {};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pNext = nullptr;
         appInfo.pApplicationName = "hello";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "hello_engine";
@@ -296,7 +295,7 @@ void initVulkan()
         // https://stackoverflow.com/questions/37575012/should-i-try-to-use-as-many-queues-as-possible
     }
 
-    { // crete swapchain
+    { // create swapchain
         VkSurfaceCapabilitiesKHR surfaceCpabilities;
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk.physicalDevice, vk.surface, &surfaceCpabilities);
 
@@ -309,9 +308,10 @@ void initVulkan()
         createInfo.imageExtent = surfaceCpabilities.currentExtent;
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        createInfo.queueFamilyIndexCount = 1;
-        createInfo.pQueueFamilyIndices = &vk.presentationQueueFamily;
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE; // VK_SHARING_MODE_CONCURRENT
+        assert(vk.presentationQueueFamily == vk.graphicsQueueFamily);
+        //createInfo.queueFamilyIndexCount = 1;
+        //createInfo.pQueueFamilyIndices = &vk.presentationQueueFamily;
         createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
         createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -332,7 +332,7 @@ void initVulkan()
         {
             VkImageViewCreateInfo info = {};
             info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            info.image = images[0];
+            info.image = images[i];
             info.viewType = VK_IMAGE_VIEW_TYPE_2D;
             info.format = VK_FORMAT_B8G8R8A8_SRGB;
             // info.components = ; // channel swizzling VK_COMPONENT_SWIZZLE_IDENTITY is 0
@@ -347,7 +347,7 @@ void initVulkan()
     }
 
     { // create graphics pipeline
-       VkShaderModule vertShadModule = createShaderModule(SHADERS_PATH"/simple.vert.glsl.spv");
+        VkShaderModule vertShadModule = createShaderModule(SHADERS_PATH"/simple.vert.glsl.spv");
         VkShaderModule fragShadModule = createShaderModule(SHADERS_PATH"/simple.frag.glsl.spv");
 
         const VkPipelineShaderStageCreateInfo stagesInfos[] = {
@@ -402,7 +402,7 @@ void initVulkan()
         //VkPipelineDepthStencilStateCreateInfo depthStencilInfo = {};
 
         VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_G_BIT;
+        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         colorBlendAttachment.blendEnable = VK_FALSE;
         VkPipelineColorBlendStateCreateInfo colorBlendInfo = {};
         colorBlendInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -481,7 +481,7 @@ void initVulkan()
         renderPassInfo.pSubpasses = &subpassDesc;
         //renderPassInfo.dependencyCount = 1;
         //renderPassInfo.pDependencies = &dependency;
-        renderPassInfo.dependencyCount = 2;
+        renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = dependencies;
 
         if(vkCreateRenderPass(vk.device, &renderPassInfo, nullptr, &vk.renderPass) != VK_SUCCESS) {
@@ -504,7 +504,7 @@ void initVulkan()
         //pipelineInfo.pDynamicState = &dynamicStateInfo;
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = vk.renderPass; // render pass describing the enviroment in which the pipeline will be used
-            // the pipeline must only be used with a render pass compatilble with this one
+            // the pipeline must only be used with a render pass compatible with this one
         pipelineInfo.subpass = 0; // index of the subpass in the render pass where this pipeline will be used
         //pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // you can derive from another pipeline
         //pipelineInfo.basePipelineIndex = -1;
@@ -585,7 +585,8 @@ void initVulkan()
         // VK_SUBPASS_CONTENTS_INLINE specifies that the contents of the subpass will be recorded inline in the
         //      primary command buffer, and secondary command buffers must not be executed within the subpass.
         // VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS specifies that the contents are recorded in secondary
-        //      command buffers that will be called from the primary command buffer, and vkCmdExecuteCommands is the only valid command on the command buffer until vkCmdNextSubpass or vkCmdEndRenderPass.
+        //      command buffers that will be called from the primary command buffer, and vkCmdExecuteCommands
+        //      is the only valid command on the command buffer until vkCmdNextSubpass or vkCmdEndRenderPass.
 
         vkCmdBindPipeline(vk.cmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, vk.pipeline);
 
@@ -634,6 +635,7 @@ void draw()
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &vk.semaphore_drawFinished;
 
+    //vkQueueWaitIdle(vk.graphicsQueue);
     if(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
         printf("Error submitting cmd buffers");
         exit(-1);
@@ -647,7 +649,7 @@ void draw()
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &imgIndex;
 
-    vkQueuePresentKHR(vk.graphicsQueue, &presentInfo);
+    vkQueuePresentKHR(vk.presentationQueue, &presentInfo);
 }
 
 int main()
@@ -664,6 +666,8 @@ int main()
     {
         glfwPollEvents();
         draw();
+        //getchar();
+        //exit(-1);
     }
 
     glfwDestroyWindow(window);
