@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <utility>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
+#include <time.h>
 
 typedef const char* const ConstStr;
 typedef uint8_t u8;
@@ -31,8 +33,10 @@ struct VulkanData
     VkPipeline pipeline;
     VkCommandPool cmdPool;
     VkCommandBuffer cmdBuffers[2];
-    VkSemaphore semaphore_swapchainImgAvailable;
-    VkSemaphore semaphore_drawFinished;
+    VkSemaphore semaphore_swapchainImgAvailable[2];
+    VkSemaphore semaphore_drawFinished[2];
+    VkFence fence_queueWorkFinished[2];
+    u32 frameInd = 0;
 } vk;
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkanDebugCallback(
@@ -105,13 +109,18 @@ void initVulkan()
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.apiVersion = VK_API_VERSION_1_0;
 
-        static ConstStr layers[] = {
-        #if !defined(NDEBUG)
-            "VK_LAYER_KHRONOS_validation",
-            //"VK_LAYER_LUNARG_api_dump",
-        #endif
-        };
-        #if !defined(NDEBUG)
+        #if defined(NDEBUG)
+            static ConstStr* layers = nullptr;
+            constexpr size_t numLayers = 0;
+            //static ConstStr layers[] = {"VK_LAYER_MESA_overlay"};
+            //constexpr size_t numLayers = 1;
+        #else
+            static ConstStr layers[] = {
+                "VK_LAYER_KHRONOS_validation",
+                //"VK_LAYER_LUNARG_api_dump",
+            };
+            constexpr size_t numLayers = std::size(layers);
+
             u32 numSupportedLayers;
             vkEnumerateInstanceLayerProperties(&numSupportedLayers, nullptr);
             std::vector<VkLayerProperties> supportedLayers(numSupportedLayers);
@@ -134,7 +143,7 @@ void initVulkan()
         VkInstanceCreateInfo instInfo = {};
         instInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         instInfo.pApplicationInfo = &appInfo;
-        instInfo.enabledLayerCount = std::size(layers);
+        instInfo.enabledLayerCount = numLayers;
         instInfo.ppEnabledLayerNames =  layers;
         u32 numGlfwExtensions;
         ConstStr* glfwExtensions = glfwGetRequiredInstanceExtensions(&numGlfwExtensions);
@@ -230,6 +239,11 @@ void initVulkan()
         vkGetPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &numQueueFamilies, nullptr);
         std::vector<VkQueueFamilyProperties> queueFamilyProps(numQueueFamilies);
         vkGetPhysicalDeviceQueueFamilyProperties(vk.physicalDevice, &numQueueFamilies, &queueFamilyProps[0]);
+        u32 graphicsFamilyInd = -1, presentationFamilyInd = -1;
+        for(u32 i = 0; i < numQueueFamilies; i++) {
+            const bool supportsGraphics = queueFamilyProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+            VkQueueFamilySwa
+        }
 
         vk.graphicsQueueFamily = numQueueFamilies;
         vk.presentationQueueFamily = numQueueFamilies;
@@ -314,7 +328,8 @@ void initVulkan()
         //createInfo.pQueueFamilyIndices = &vk.presentationQueueFamily;
         createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
         createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        //createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        createInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
         createInfo.clipped = VK_FALSE;
         //createInfo.oldSwapchain = ; // this can be used to recycle the old swapchain when resizing the window
 
@@ -605,12 +620,26 @@ void initVulkan()
     {
         VkSemaphoreCreateInfo info = {};
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (vkCreateSemaphore(vk.device, &info, nullptr, &vk.semaphore_swapchainImgAvailable) != VK_SUCCESS ||
-            vkCreateSemaphore(vk.device, &info, nullptr, &vk.semaphore_drawFinished) != VK_SUCCESS
-        ) {
-            printf("Error creating semaphores\n");
-            exit(-1);
+
+        VkSemaphore semaphores[4];
+        for(int i = 0; i < 4; i++) {
+            if(vkCreateSemaphore(vk.device, &info, nullptr, &semaphores[i]) != VK_SUCCESS) {
+                printf("Error creating semaphores\n");
+                exit(-1);
+            }
         }
+        vk.semaphore_swapchainImgAvailable[0] = semaphores[0];
+        vk.semaphore_swapchainImgAvailable[1] = semaphores[1];
+        vk.semaphore_drawFinished[0] = semaphores[2];
+        vk.semaphore_drawFinished[1] = semaphores[3];
+    }
+
+    { // create fences for synchonizing swapchain synchronization
+        VkFenceCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        for(int i = 0; i < 2; i++)
+            vkCreateFence(vk.device, &info, nullptr, &vk.fence_queueWorkFinished[i]);
     }
 }
 
@@ -620,23 +649,24 @@ void draw()
     vkAcquireNextImageKHR(vk.device,
         vk.swapchain,
         1'000'000'000, // timeout in nanoseconds
-        vk.semaphore_swapchainImgAvailable,
+        vk.semaphore_swapchainImgAvailable[vk.frameInd],
         VK_NULL_HANDLE, // fence
         &imgIndex); // we will use this index for addressing the corresponding cmd buffer
 
     VkSubmitInfo submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &vk.semaphore_swapchainImgAvailable;
+    submitInfo.pWaitSemaphores = &vk.semaphore_swapchainImgAvailable[vk.frameInd];
     const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &vk.cmdBuffers[imgIndex];
+    submitInfo.pCommandBuffers = &vk.cmdBuffers[vk.frameInd];
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &vk.semaphore_drawFinished;
+    submitInfo.pSignalSemaphores = &vk.semaphore_drawFinished[vk.frameInd];
 
-    //vkQueueWaitIdle(vk.graphicsQueue);
-    if(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+    vkWaitForFences(vk.device, 1, &vk.fence_queueWorkFinished[vk.frameInd], VK_TRUE, -1);
+    vkResetFences(vk.device, 1, &vk.fence_queueWorkFinished[vk.frameInd]);
+    if(vkQueueSubmit(vk.graphicsQueue, 1, &submitInfo, vk.fence_queueWorkFinished[vk.frameInd]) != VK_SUCCESS) {
         printf("Error submitting cmd buffers");
         exit(-1);
     }
@@ -644,12 +674,14 @@ void draw()
     VkPresentInfoKHR presentInfo = {};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &vk.semaphore_drawFinished;
+    presentInfo.pWaitSemaphores = &vk.semaphore_drawFinished[vk.frameInd];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &vk.swapchain;
     presentInfo.pImageIndices = &imgIndex;
 
     vkQueuePresentKHR(vk.presentationQueue, &presentInfo);
+
+    vk.frameInd = (vk.frameInd + 1) % 2;
 }
 
 int main()
@@ -662,13 +694,25 @@ int main()
 
     initVulkan();
 
+    const clock_t startTime = clock();
+    int frameCounter = 0;
+    const int FRAME_COUNTER = 100000;
+
     while(!glfwWindowShouldClose(window))
     {
+        //printf("frameCounter: %d\n", frameCounter);
         glfwPollEvents();
         draw();
-        //getchar();
-        //exit(-1);
+        frameCounter++;
+        if(frameCounter == FRAME_COUNTER)
+            glfwSetWindowShouldClose(window, true);
     }
+
+    const clock_t endTime = clock();
+    const double elapsedSecs = double(endTime - startTime) / CLOCKS_PER_SEC;
+    const double fps = FRAME_COUNTER / elapsedSecs;
+
+    printf("elapsedSecs: %g\nfps: %g\n", elapsedSecs, fps);
 
     glfwDestroyWindow(window);
     glfwTerminate();

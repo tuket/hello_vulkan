@@ -18,6 +18,11 @@ add_executable(hello
 )
 target_link_libraries(hello ${COMMON_LIBS})
 
+add_executable(hello2
+    hello2.cpp
+)
+target_link_libraries(hello2 ${COMMON_LIBS})
+
 add_executable(tutorial
     tutorial.cpp
 )
